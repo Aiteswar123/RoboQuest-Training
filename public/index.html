@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Weekend Booking Form</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"></script>
+</head>
+<body>
+  <div class="container">
+    <img src="techdome_logo.jpg" alt="TechDome Logo" class="logo" />
+    <h1>RoboQuest Training Form</h1>
+
+    <form id="bookingForm">
+      <label>Email (PIC):</label>
+      <input type="email" id="email" required />
+
+      <label>School Name:</label>
+      <input type="text" id="school" required />
+
+      <label>Group Name:</label>
+      <input type="text" id="group" required />
+
+      <label>Choose Date:</label>
+      <input type="date" id="date" required />
+
+      <div id="availability"></div>
+
+      <label>Choose Session:</label>
+      <select id="session" required>
+        <option value="10am-12pm">10am–12pm</option>
+        <option value="2pm-4pm">2pm–4pm</option>
+        <option value="4pm-6pm">4pm–6pm</option>
+      </select>
+
+      <button type="submit">Book Session</button>
+    </form>
+
+    <div id="messageBox"></div>
+
+    <div id="adminPanel" style="display:none;">
+      <h2>Admin Panel – Bookings</h2>
+      <button onclick="logout()">Logout</button>
+      <table id="bookingsTable">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>School</th>
+            <th>Group</th>
+            <th>Date</th>
+            <th>Session</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div id="loginSection">
+      <h2>Admin Login</h2>
+      <input type="email" id="adminEmail" placeholder="Admin Email">
+      <input type="password" id="adminPassword" placeholder="Password">
+      <button onclick="adminLogin()">Login</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth();
+    const bookingsRef = collection(db, "bookings");
+
+    const form = document.getElementById("bookingForm");
+    const messageBox = document.getElementById("messageBox");
+    const bookingsTable = document.querySelector("#bookingsTable tbody");
+
+    function showMessage(text, success=true) {
+      messageBox.textContent = text;
+      messageBox.className = success ? "success" : "error";
+      setTimeout(() => messageBox.textContent = '', 4000);
+    }
+
+    async function getBookingsCount(date, session) {
+      const q = query(bookingsRef, where("date", "==", date), where("session", "==", session));
+      const snapshot = await getDocs(q);
+      return snapshot.size;
+    }
+
+    async function updateAvailability() {
+      const dateInput = document.getElementById("date");
+      const availabilityDiv = document.getElementById("availability");
+      availabilityDiv.innerHTML = "";
+
+      const selectedDate = new Date(dateInput.value);
+      const day = selectedDate.getDay();
+
+      if (![0, 6].includes(day)) {
+        availabilityDiv.innerHTML = `<p class="error">Only Saturdays and Sundays are available for booking.</p>`;
+        return;
+      }
+
+      const sessions = ["10am-12pm", "2pm-4pm", "4pm-6pm"];
+      for (const session of sessions) {
+        const count = await getBookingsCount(dateInput.value, session);
+        const status = count < 3 ? `${3 - count} slot(s) available` : "Full";
+        const div = document.createElement("div");
+        div.textContent = `${session}: ${status}`;
+        div.className = count < 3 ? "available" : "full";
+        availabilityDiv.appendChild(div);
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const email = document.getElementById("email").value;
+      const school = document.getElementById("school").value;
+      const group = document.getElementById("group").value;
+      const date = document.getElementById("date").value;
+      const session = document.getElementById("session").value;
+
+      const dateObj = new Date(date);
+      const day = dateObj.getDay();
+      if (![0, 6].includes(day)) {
+        showMessage("Only weekends are allowed!", false);
+        return;
+      }
+
+      const count = await getBookingsCount(date, session);
+      if (count >= 3) {
+        showMessage("Session full. Please choose another.", false);
+        return;
+      }
+
+      await addDoc(bookingsRef, { email, school, group, date, session });
+      showMessage("Booking successful!");
+      form.reset();
+      updateAvailability();
+    });
+
+    function renderBooking(id, data) {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${data.email}</td>
+        <td>${data.school}</td>
+        <td>${data.group}</td>
+        <td>${data.date}</td>
+        <td>${data.session}</td>
+        <td><button onclick="deleteBooking('${id}')">Delete</button></td>
+      `;
+      bookingsTable.appendChild(row);
+    }
+
+    window.deleteBooking = async function(id) {
+      await deleteDoc(doc(db, "bookings", id));
+      showMessage("Booking deleted.");
+    };
+
+    window.adminLogin = function () {
+      const email = document.getElementById("adminEmail").value;
+      const password = document.getElementById("adminPassword").value;
+      signInWithEmailAndPassword(auth, email, password)
+        .then(() => showMessage("Admin login successful"))
+        .catch(() => showMessage("Invalid login", false));
+    };
+
+    window.logout = function () {
+      signOut(auth).then(() => {
+        showMessage("Logged out");
+        document.getElementById("adminPanel").style.display = "none";
+        document.getElementById("loginSection").style.display = "block";
+      });
+    };
+
+    onAuthStateChanged(auth, user => {
+      if (user) {
+        document.getElementById("adminPanel").style.display = "block";
+        document.getElementById("loginSection").style.display = "none";
+
+        onSnapshot(bookingsRef, (snapshot) => {
+          bookingsTable.innerHTML = "";
+          snapshot.forEach((doc) => {
+            renderBooking(doc.id, doc.data());
+          });
+        });
+      }
+    });
+
+    document.getElementById("date").addEventListener("change", updateAvailability);
+  </script>
+</body>
+</html>
